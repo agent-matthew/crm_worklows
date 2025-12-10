@@ -3,8 +3,8 @@ runtime: python3
 build:
   commands:
     build:
-      - python -m pip install -r requirements.txt
+      - python3 -m pip install -r requirements.txt
 run:
-  command: python -m gunicorn --bind 0.0.0.0:8080 main:app
+  command: python3 -m gunicorn --bind 0.0.0.0:8080 main:app
   network:
     port: 8080
