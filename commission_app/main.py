@@ -41,7 +41,8 @@ def handle_webhook():
     
     # GHL Webhooks usually contain 'id' or 'contact_id'. We need the Opp ID.
     opp_id = data.get("id")
-    pipeline_id = data.get("pipelineId")
+    # Support both camelCase and snake_case (GHL varies)
+    pipeline_id = data.get("pipelineId") or data.get("pipeline_id")
     
     if not opp_id:
         return jsonify({"error": "Missing 'id' in payload"}), 400
