@@ -44,6 +44,16 @@ def handle_webhook():
     # Support both camelCase and snake_case (GHL varies)
     pipeline_id = data.get("pipelineId") or data.get("pipeline_id")
     
+    # Extract Loan Amount from Custom Data (if available) - This bypasses API read issues
+    custom_data = data.get("customData", {})
+    # Check common keys users might use
+    payload_loan_amount = (
+        custom_data.get("loan-amount") or 
+        custom_data.get("loan_amount") or 
+        custom_data.get("Loan Amount") or
+        custom_data.get("loan amount")
+    )
+    
     if not opp_id:
         return jsonify({"error": "Missing 'id' in payload"}), 400
         
@@ -51,7 +61,7 @@ def handle_webhook():
     client = GHLClient(token=GHL_ACCESS_TOKEN)
     
     # Process
-    success, message = process_single_opportunity(client, opp_id, pipeline_id)
+    success, message = process_single_opportunity(client, opp_id, pipeline_id, payload_loan_amount)
     
     if success:
         return jsonify({"status": "success", "message": message}), 200

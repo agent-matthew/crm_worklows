@@ -107,18 +107,35 @@ def process_opportunities(client, opportunities):
                 
     return updated_count, errors_count
 
-def process_single_opportunity(client, opp_id, pipeline_id=None):
+def process_single_opportunity(client, opp_id, pipeline_id=None, payload_loan_amount=None):
     """
     Fetches a single opportunity by ID and updates it if necessary.
-    Returns (bool, str) -> (Success/Skipped, Message)
+    Uses payload_loan_amount if provided (preferred), otherwise reads from API.
     """
     try:
         opp = client.get_opportunity(opp_id, pipeline_id)
         if not opp:
             return False, f"Opportunity {opp_id} not found."
             
-        # 1. Get Loan Amount
-        loan_amount = get_loan_amount(opp)
+        # 1. Get Loan Amount (Prefer Payload, then API)
+        loan_amount = 0.0
+        
+        # Try Payload first
+        if payload_loan_amount:
+            try:
+                # Handle strings like "$100,000"
+                if isinstance(payload_loan_amount, str):
+                    loan_amount = float(payload_loan_amount.replace('$', '').replace(',', '').strip())
+                else:
+                    loan_amount = float(payload_loan_amount)
+                logger.info(f"Using Loan Amount from Webhook Payload: ${loan_amount}")
+            except ValueError:
+                logger.warning(f"Invalid Loan Amount in Payload: {payload_loan_amount}")
+        
+        # Fallback to API object if payload failed or wasn't provided
+        if loan_amount <= 0:
+            loan_amount = get_loan_amount(opp)
+            
         if loan_amount <= 0:
             return False, f"Skipped: No valid Loan Amount (Found: {loan_amount})"
             
