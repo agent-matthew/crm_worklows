@@ -5,6 +5,6 @@ build:
     build:
       - python3 -m pip install -r requirements.txt
 run:
-  command: sh -c "echo 'Debugging Packages:' && python3 -m pip freeze && gunicorn --bind 0.0.0.0:8080 main:app"
+  command: sh -c "export PATH=$PATH:$(python3 -c 'import sysconfig; print(sysconfig.get_path(\"scripts\"))') && gunicorn --bind 0.0.0.0:8080 main:app"
   network:
     port: 8080
