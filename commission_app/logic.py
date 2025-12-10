@@ -86,13 +86,13 @@ def process_opportunities(client, opportunities):
                 
     return updated_count, errors_count
 
-def process_single_opportunity(client, opp_id):
+def process_single_opportunity(client, opp_id, pipeline_id=None):
     """
     Fetches a single opportunity by ID and updates it if necessary.
     Returns (bool, str) -> (Success/Skipped, Message)
     """
     try:
-        opp = client.get_opportunity(opp_id)
+        opp = client.get_opportunity(opp_id, pipeline_id)
         if not opp:
             return False, f"Opportunity {opp_id} not found."
             

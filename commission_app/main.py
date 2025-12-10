@@ -40,8 +40,8 @@ def handle_webhook():
     logger.info(f"Received Webhook Payload: {data}")
     
     # GHL Webhooks usually contain 'id' or 'contact_id'. We need the Opp ID.
-    # Payload format varies by trigger type. Assuming standard Opp update trigger.
     opp_id = data.get("id")
+    pipeline_id = data.get("pipelineId")
     
     if not opp_id:
         return jsonify({"error": "Missing 'id' in payload"}), 400
@@ -50,7 +50,7 @@ def handle_webhook():
     client = GHLClient(token=GHL_ACCESS_TOKEN)
     
     # Process
-    success, message = process_single_opportunity(client, opp_id)
+    success, message = process_single_opportunity(client, opp_id, pipeline_id)
     
     if success:
         return jsonify({"status": "success", "message": message}), 200

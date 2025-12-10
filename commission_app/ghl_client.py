@@ -74,6 +74,35 @@ class GHLClient:
             
         return opportunities
 
+    def get_opportunity(self, opportunity_id, pipeline_id=None):
+        """
+        Fetches a single opportunity.
+        If pipeline_id is provided, hits the specific endpoint (Fast).
+        If not, searches across all pipelines (Slow).
+        """
+        # Fast Path
+        if pipeline_id:
+            url = f"{BASE_URL}/pipelines/{pipeline_id}/opportunities/{opportunity_id}"
+            try:
+                response = requests.get(url, headers=self.headers)
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code == 404:
+                    logger.warning(f"Opportunity {opportunity_id} not found in pipeline {pipeline_id}")
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error fetching opportunity {opportunity_id}: {e}")
+        
+        # Slow Path (Fallback or if not found above)
+        logger.info(f"Searching all pipelines for Opportunity {opportunity_id}...")
+        all_opps = self.fetch_opportunities(status='open') # Search open first
+        for opp in all_opps:
+            if opp.get('id') == opportunity_id:
+                return opp
+        
+        # Try status='all' or other statuses if strictness is needed, but usually 'open' covers active workflows.
+        # If still not found, return None
+        return None
+
     def update_opportunity_value(self, pipeline_id, opportunity_id, monetary_value):
         """
         Updates the monetary value of a specific opportunity.
