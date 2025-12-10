@@ -1,1 +1,1 @@
-worker: cd commission_app && python main.py
+web: cd commission_app && gunicorn main:app

@@ -1,57 +1,65 @@
-import time
+import os
 import logging
 import sys
-from config import GHL_ACCESS_TOKEN, POLL_INTERVAL_SECONDS
+from flask import Flask, request, jsonify
+from config import GHL_ACCESS_TOKEN
 from ghl_client import GHLClient
-from logic import process_opportunities
+from logic import process_single_opportunity
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Configure Logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("commission_updater.log")
+        logging.StreamHandler(sys.stdout)
     ]
 )
-logger = logging.getLogger("Main")
+logger = logging.getLogger("WebhookService")
 
-def main():
-    logger.info("Starting GHL Commission Updater Service...")
-    logger.info(f"Poll Interval: {POLL_INTERVAL_SECONDS} seconds")
+app = Flask(__name__)
+
+@app.route("/", methods=["GET"])
+def health_check():
+    return jsonify({"status": "active", "service": "Commission Updater"}), 200
+
+@app.route("/webhook", methods=["POST"])
+def handle_webhook():
+    """
+    Receives GHL 'Opportunity Changed' webhook.
+    Expected payload includes 'id' (opportunity ID).
+    """
+    data = request.json
     
+    if not data:
+        return jsonify({"error": "No JSON payload provided"}), 400
+        
+    logger.info(f"Received Webhook Payload: {data}")
+    
+    # GHL Webhooks usually contain 'id' or 'contact_id'. We need the Opp ID.
+    # Payload format varies by trigger type. Assuming standard Opp update trigger.
+    opp_id = data.get("id")
+    
+    if not opp_id:
+        return jsonify({"error": "Missing 'id' in payload"}), 400
+        
+    # Initialize Client
     client = GHLClient(token=GHL_ACCESS_TOKEN)
     
-    try:
-        while True:
-            logger.info("Polling for opportunities...")
-            start_time = time.time()
-            
-            try:
-                # Fetch all open opportunities
-                opportunities = client.fetch_opportunities(status="open")
-                logger.info(f"Fetched {len(opportunities)} open opportunities.")
-                
-                # Process them
-                updated, errors = process_opportunities(client, opportunities)
-                
-                if updated > 0 or errors > 0:
-                    logger.info(f"Cycle Complete: {updated} updated, {errors} errors.")
-                else:
-                    logger.info("No updates required.")
-                    
-            except Exception as e:
-                logger.error(f"Unexpected error in polling loop: {e}", exc_info=True)
-            
-            # Sleep logic
-            elapsed = time.time() - start_time
-            sleep_time = max(0, POLL_INTERVAL_SECONDS - elapsed)
-            logger.debug(f"Sleeping for {sleep_time:.2f} seconds...")
-            time.sleep(sleep_time)
-            
-    except KeyboardInterrupt:
-        logger.info("Service stopping by user request (Ctrl+C).")
-        sys.exit(0)
+    # Process
+    success, message = process_single_opportunity(client, opp_id)
+    
+    if success:
+        return jsonify({"status": "success", "message": message}), 200
+    else:
+        # We return 200 even on logic failure to prevent GHL from retrying indefinitely
+        # unless it's a transient server error.
+        logger.warning(f"Processing failed: {message}")
+        return jsonify({"status": "ignored", "reason": message}), 200
 
 if __name__ == "__main__":
-    main()
+    # Local dev run
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

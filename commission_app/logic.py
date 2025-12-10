@@ -85,3 +85,36 @@ def process_opportunities(client, opportunities):
                 errors_count += 1
                 
     return updated_count, errors_count
+
+def process_single_opportunity(client, opp_id):
+    """
+    Fetches a single opportunity by ID and updates it if necessary.
+    Returns (bool, str) -> (Success/Skipped, Message)
+    """
+    try:
+        opp = client.get_opportunity(opp_id)
+        if not opp:
+            return False, f"Opportunity {opp_id} not found."
+            
+        # 1. Get Loan Amount
+        loan_amount = get_loan_amount(opp)
+        if loan_amount <= 0:
+            return False, f"Skipped: No valid Loan Amount (Found: {loan_amount})"
+            
+        # 2. Calculate Expected Value
+        expected_value = calculate_commission(loan_amount)
+        
+        # 3. Check if Update Needed
+        if should_update(opp, expected_value):
+            logger.info(f"Opportunity {opp_id}: Loan Amount=${loan_amount:,.2f} -> Updating Value to ${expected_value:,.2f}")
+            success = client.update_opportunity_value(opp.get("pipelineId"), opp_id, expected_value)
+            if success:
+                return True, "Updated successfully."
+            else:
+                return False, "Failed to update API."
+        else:
+            return True, "No update needed (Value already correct)."
+            
+    except Exception as e:
+        logger.error(f"Error processing single opportunity {opp_id}: {e}", exc_info=True)
+        return False, f"Error: {str(e)}"
