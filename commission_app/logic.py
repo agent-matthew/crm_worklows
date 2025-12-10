@@ -11,8 +11,20 @@ def get_loan_amount(opportunity):
     custom_fields = opportunity.get("customFields", [])
     
     for field in custom_fields:
-        # Check by ID or Key. GHL V1 usually puts the ID in 'id'.
-        if field.get("id") == LOAN_AMOUNT_FIELD_KEY or field.get("key") == LOAN_AMOUNT_FIELD_KEY:
+        f_id = field.get("id", "")
+        f_key = field.get("key", "")
+        f_name = field.get("name", "")
+        
+        # Normalize name for comparison (e.g. "Loan Amount" -> "loan_amount")
+        f_name_norm = f_name.lower().replace(" ", "_").replace("/", "").replace("__", "_")
+        target_key_norm = LOAN_AMOUNT_FIELD_KEY.lower()
+
+        # Check by ID, Key, or Normalized Name
+        if (f_id == LOAN_AMOUNT_FIELD_KEY or 
+            f_key == LOAN_AMOUNT_FIELD_KEY or 
+            f_name_norm == target_key_norm or 
+            f_name_norm.replace("_", "") == target_key_norm.replace("_", "")):
+            
             value = field.get("value")
             # Handle potential string formatting issues (e.g. "$100,000")
             if isinstance(value, str):
@@ -25,9 +37,14 @@ def get_loan_amount(opportunity):
                 return float(value)
     
     # Debugging: Log available keys if we fail to find the specific one
-    # This helps troubleshoot mismatches instantly
-    available_keys = [f.get("key", f.get("id")) for f in custom_fields]
-    logger.warning(f"Failed to find Loan Amount key '{LOAN_AMOUNT_FIELD_KEY}'. Available keys: {available_keys}")
+    # We log Name, Key, AND ID to help the user identify the right one
+    available_fields = [{
+        "name": f.get("name"), 
+        "id": f.get("id"), 
+        "key": f.get("key")
+    } for f in custom_fields]
+    
+    logger.warning(f"Failed to find Loan Amount key '{LOAN_AMOUNT_FIELD_KEY}'. Available fields: {available_fields}")
     return 0.0
 
 def calculate_commission(loan_amount):
