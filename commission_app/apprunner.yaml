@@ -5,6 +5,6 @@ build:
     build:
       - python3 -m pip install -r requirements.txt
 run:
-  command: python3 -m gunicorn --bind 0.0.0.0:8080 main:app
+  command: gunicorn --bind 0.0.0.0:8080 main:app
   network:
     port: 8080
