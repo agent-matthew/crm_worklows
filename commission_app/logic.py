@@ -23,7 +23,11 @@ def get_loan_amount(opportunity):
                     return 0.0
             elif isinstance(value, (int, float)):
                 return float(value)
-                
+    
+    # Debugging: Log available keys if we fail to find the specific one
+    # This helps troubleshoot mismatches instantly
+    available_keys = [f.get("key", f.get("id")) for f in custom_fields]
+    logger.warning(f"Failed to find Loan Amount key '{LOAN_AMOUNT_FIELD_KEY}'. Available keys: {available_keys}")
     return 0.0
 
 def calculate_commission(loan_amount):
