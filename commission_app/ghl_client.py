@@ -103,18 +103,42 @@ class GHLClient:
         # If still not found, return None
         return None
 
-    def update_opportunity_value(self, pipeline_id, opportunity_id, monetary_value):
+    def update_opportunity_value(self, pipeline_id, opportunity_id, monetary_value, existing_opp=None):
         """
         Updates the monetary value of a specific opportunity.
+        Merges existing fields to prevent 422 Unprocessable Entity errors.
         """
         url = f"{BASE_URL}/pipelines/{pipeline_id}/opportunities/{opportunity_id}"
         payload = {
             "monetaryValue": monetary_value
         }
         
+        # GHL V1 PUT request often requires other mandatory fields like status/stage
+        # We merge them from the existing object to be safe
+        if existing_opp:
+            if existing_opp.get("status"):
+                payload["status"] = existing_opp.get("status")
+            if existing_opp.get("pipelineStageId"):
+                payload["pipelineStageId"] = existing_opp.get("pipelineStageId")
+            
+            # GHL uses 'name' or 'title' depending on endpoint version. Send both if available/safe.
+            if existing_opp.get("name"):
+                payload["name"] = existing_opp.get("name")
+            if existing_opp.get("title"):
+                payload["title"] = existing_opp.get("title")
+                
+            # Keep contact info attached if present (crucial for integrity)
+            if existing_opp.get("contactId"):
+                payload["contactId"] = existing_opp.get("contactId")
+
         try:
             response = requests.put(url, headers=self.headers, json=payload)
-            response.raise_for_status()
+            
+            if response.status_code not in [200, 201]:
+                # Log the actual error text! Critical for debugging 422s.
+                logger.error(f"GHL API Error {response.status_code}: {response.text}")
+                response.raise_for_status()
+                
             logger.info(f"Successfully updated Opportunity {opportunity_id} to ${monetary_value}")
             return True
         except requests.exceptions.RequestException as e:

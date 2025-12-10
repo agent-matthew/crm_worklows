@@ -145,7 +145,8 @@ def process_single_opportunity(client, opp_id, pipeline_id=None, payload_loan_am
         # 3. Check if Update Needed
         if should_update(opp, expected_value):
             logger.info(f"Opportunity {opp_id}: Loan Amount=${loan_amount:,.2f} -> Updating Value to ${expected_value:,.2f}")
-            success = client.update_opportunity_value(opp.get("pipelineId"), opp_id, expected_value)
+            # 4. Perform Update
+            success = client.update_opportunity_value(opp.get("pipelineId"), opp_id, expected_value, existing_opp=opp)
             if success:
                 return True, "Updated successfully."
             else:
