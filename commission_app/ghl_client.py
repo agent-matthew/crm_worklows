@@ -122,14 +122,17 @@ class GHLClient:
                 payload["pipelineStageId"] = existing_opp.get("pipelineStageId")
             
             # GHL uses 'name' or 'title' depending on endpoint version. Send both if available/safe.
-            if existing_opp.get("name"):
-                payload["name"] = existing_opp.get("name")
-            if existing_opp.get("title"):
-                payload["title"] = existing_opp.get("title")
+            # CRITICAL FIX: API error says 'title' is mandatory. Map 'name' -> 'title'.
+            name_val = existing_opp.get("name") or existing_opp.get("opportunity_name") or existing_opp.get("title")
+            if name_val:
+                payload["name"] = name_val
+                payload["title"] = name_val
                 
             # Keep contact info attached if present (crucial for integrity)
             if existing_opp.get("contactId"):
                 payload["contactId"] = existing_opp.get("contactId")
+            elif existing_opp.get("contact", {}).get("id"):
+                 payload["contactId"] = existing_opp.get("contact").get("id")
 
         try:
             response = requests.put(url, headers=self.headers, json=payload)
