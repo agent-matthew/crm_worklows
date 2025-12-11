@@ -103,21 +103,8 @@ class GHLClient:
         # If still not found, return None
         return None
 
-    def update_opportunity_value(self, pipeline_id, opportunity_id, monetary_value, existing_opp=None):
-        """
-        Updates the monetary value of a specific opportunity.
-        Merges existing fields to prevent 422 Unprocessable Entity errors.
-        """
-        if response.status_code not in [200, 201]:
-                # Log the actual error text! Critical for debugging 422s.
-                logger.error(f"GHL API Error {response.status_code}: {response.text}")
-                response.raise_for_status()
-                
-            logger.info(f"Successfully updated Opportunity {opportunity_id} to ${monetary_value}")
-            return True
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to update Opportunity {opportunity_id}: {e}")
-            return False
+    # Removed duplicate/broken method fragment
+
 
     def update_opportunity_value(self, pipeline_id, opportunity_id, monetary_value, existing_opp=None):
         """
