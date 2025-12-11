@@ -108,39 +108,93 @@ class GHLClient:
         Updates the monetary value of a specific opportunity.
         Merges existing fields to prevent 422 Unprocessable Entity errors.
         """
+        if response.status_code not in [200, 201]:
+                # Log the actual error text! Critical for debugging 422s.
+                logger.error(f"GHL API Error {response.status_code}: {response.text}")
+                response.raise_for_status()
+                
+            logger.info(f"Successfully updated Opportunity {opportunity_id} to ${monetary_value}")
+            return True
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to update Opportunity {opportunity_id}: {e}")
+            return False
+
+    def update_opportunity_value(self, pipeline_id, opportunity_id, monetary_value, existing_opp=None):
+        """
+        Updates the monetary value of a specific opportunity.
+        """
         url = f"{BASE_URL}/pipelines/{pipeline_id}/opportunities/{opportunity_id}"
+        
         payload = {
             "monetaryValue": monetary_value
         }
         
-        # GHL V1 PUT request often requires other mandatory fields like status/stage
-        # We merge them from the existing object to be safe
         if existing_opp:
+            # 1. Status & Stage (Required)
             if existing_opp.get("status"):
                 payload["status"] = existing_opp.get("status")
             if existing_opp.get("pipelineStageId"):
                 payload["pipelineStageId"] = existing_opp.get("pipelineStageId")
             
-            # GHL uses 'name' or 'title' depending on endpoint version. Send both if available/safe.
-            # CRITICAL FIX: API error says 'title' is mandatory. Map 'name' -> 'title'.
-            name_val = existing_opp.get("name") or existing_opp.get("opportunity_name") or existing_opp.get("title")
-            if name_val:
-                payload["name"] = name_val
-                payload["title"] = name_val
-                
-            # Keep contact info attached if present (crucial for integrity)
-            if existing_opp.get("contactId"):
-                payload["contactId"] = existing_opp.get("contactId")
-            elif existing_opp.get("contact", {}).get("id"):
-                 payload["contactId"] = existing_opp.get("contact").get("id")
+            # --- Robust Name Extraction ---
+            
+            # Opportunity Title
+            # Try specific keys first, fall back to 'title' or 'name' which might be ambiguous
+            opp_title = (existing_opp.get("opportunity_name") or 
+                         existing_opp.get("title") or 
+                         existing_opp.get("name"))
+
+            # Contact Name
+            # Check nested 'contact' object first
+            contact_dict = existing_opp.get("contact") or {}
+            contact_name = (contact_dict.get("name") or 
+                            contact_dict.get("full_name") or 
+                            contact_dict.get("fullName"))
+            
+            if not contact_name:
+                # Construct from contact dict parts
+                f = contact_dict.get("firstName") or contact_dict.get("first_name") or ""
+                l = contact_dict.get("lastName") or contact_dict.get("last_name") or ""
+                if f or l:
+                     contact_name = f"{f} {l}".strip()
+
+            if not contact_name:
+                # Check ROOT level fields (common in some GHL representations)
+                contact_name = (existing_opp.get("contact_name") or 
+                                existing_opp.get("full_name") or 
+                                existing_opp.get("fullName"))
+
+            if not contact_name:
+                # Construct from root parts
+                f = existing_opp.get("first_name") or existing_opp.get("firstName") or ""
+                l = existing_opp.get("last_name") or existing_opp.get("lastName") or ""
+                if f or l:
+                    contact_name = f"{f} {l}".strip()
+
+            logger.info(f"Extracted [Contact: '{contact_name}'] [Opp: '{opp_title}'] for Update Payload")
+
+            # --- Construct Payload ---
+            # 'name' field in V1 often maps to the CONTACT Name when linked.
+            # 'title' field maps to the OPPORTUNITY Title.
+            
+            if contact_name:
+                payload["name"] = contact_name
+            else:
+                # If we absolutely cannot find a contact name, we are in a bind.
+                # If we send Opp Title as 'name', we risk renaming the contact.
+                # Use Opp Title as fallback but log warning.
+                logger.warning("Could not find Contact Name! Using Opportunity Title as 'name' fallback.")
+                if opp_title:
+                    payload["name"] = opp_title
+
+            if opp_title:
+                payload["title"] = opp_title
+                # Some docs suggest 'opportunity_name' might be used? Add it just in case.
+                # It shouldn't hurt to be redundant if keys are ignored.
+                payload["opportunity_name"] = opp_title
 
         try:
             response = requests.put(url, headers=self.headers, json=payload)
-            
-            if response.status_code not in [200, 201]:
-                # Log the actual error text! Critical for debugging 422s.
-                logger.error(f"GHL API Error {response.status_code}: {response.text}")
-                response.raise_for_status()
                 
             logger.info(f"Successfully updated Opportunity {opportunity_id} to ${monetary_value}")
             return True
