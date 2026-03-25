@@ -140,19 +140,23 @@ GHL CRM                        Our Service                    BytePro API
 
 ### Condition Table (Discovered — Not Yet Implemented)
 > Loan conditions with status tracking. Each condition is a row.
+> ⚠️ **BytePro API hangs indefinitely on incorrect field names** (no error, no timeout). Only use confirmed field names below.
 
-| FieldName | Description | Notes |
-|-----------|-------------|-------|
-| `DescriptionTemplate` | Condition description text | String |
-| `Class` | Condition class (UW, etc.) | |
-| `Type` | Condition type (APP, DISCL, CRED, INCOME) | |
-| `No` | Condition number | |
-| `Stage` | Stage (e.g., "Prior To Docs") | |
-| `Cleared` | Whether condition is cleared | Checkbox — likely boolean |
-| `Requested` | Date requested | |
-| `Received` | Date received | |
-| `Submitted` | Date submitted | |
-| `Responsibility` | Who is responsible (Loan Processor, Underwriter, etc.) | |
+#### ✅ Confirmed Fields (API-tested)
+| FieldName | Description | Source |
+|-----------|-------------|--------|
+| `DescriptionTemplate` | Condition description text | API test |
+| `ConditionStage` | Stage (e.g., "Prior To Docs") | API test |
+| `ResponsibleParty` | Who is responsible | User screenshot — ContactCat enum (1=LO, 2=Processor, 4=UW, etc.) |
+
+#### ⏳ Pending — Awaiting Field Info from IT Team
+| UI Column | Purpose | Guessed Names (ALL FAILED) |
+|-----------|---------|----------------------------|
+| **Cleared** | Whether condition is cleared (checkbox) | `Cleared`, `ClearedDate`, `ConditionCleared` — all caused API hangs |
+| **Type** | Condition type (APP, DISCL, CRED, INCOME) | `ConditionType` — caused API hang |
+| **No** | Condition number (101, 103, etc.) | `ConditionNo` — caused API hang |
+
+> 📧 IT team has been contacted for exact field names — they have these mapped for the company intranet.
 
 ### FileData Table
 | FieldName | Description | Notes |
@@ -246,8 +250,9 @@ byte_api/
 │       ├── lender-order.js        ← lender order email HTML
 │       └── processor-reminder.js  ← processor reminder email HTML
 └── scripts/
-    ├── test-workflow.js   ← E2E test (uses real BytePro, mock SMTP)
-    └── demo.js            ← quick demo: fetch title company
+    ├── test-workflow.js          ← E2E test (uses real BytePro, mock SMTP)
+    ├── discover-conditions.js    ← condition table field probing tool
+    └── demo.js                   ← quick demo: fetch title company
 ```
 
 ---
@@ -265,7 +270,9 @@ byte_api/
 | 7 | Session tokens expire; 401 triggers re-auth | Client handles automatically |
 | 8 | **Co-borrower is in `Borrower` table** (not separate table) | Use `MaxItems: 2` — row 1 = borrower, row 2 = co-borrower |
 | 9 | Loan amount from GHL, not BytePro | Saves API calls; uses `loan_with_mipfunding_fee` field |
-| 10 | Conditions table exists with `Cleared` status | Enables future condition-fetching workflow |
+| 10 | Conditions table is queryable (`DescriptionTemplate`, `ConditionStage`, `ResponsibleParty` confirmed) | Enables future condition-fetching workflow |
+| 11 | **API hangs indefinitely on wrong field names** — no error, no timeout | Must use exact field names from in-app Field Info; cannot brute-force discover |
+| 12 | SearchHelp/SearchExample endpoints document query structure only — not field catalogs | No public BytePro field docs exist; Field Info popups are the only source |
 
 ---
 
@@ -316,9 +323,11 @@ byte_api/
 - [x] Email service (SMTP + mock)
 - [x] Processing workflow (lender order + reminder)
 - [x] E2E testing
+- [ ] **Configure real SMTP** — IT setting up dedicated email account (credentials incoming)
+- [ ] **Get missing Condition field names from IT** — Cleared, Type, No
+- [ ] **Build Conditions workflow** — fetch open PTD conditions on "Conditional Approval" trigger
 - [ ] Deploy to AWS App Runner
-- [ ] Configure real SMTP (processing@... email)
 - [ ] Configure real GHL API token
-- [ ] Conditions fetching (Conditional Approval trigger)
-- [ ] Google Sheets integration
+- [ ] Google Sheets integration (conditions tracking)
 - [ ] Expand to other party types (Insurance Co, etc.)
+- [ ] Add Suspense and Prior To Funding condition stages
