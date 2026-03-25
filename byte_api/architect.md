@@ -7,38 +7,49 @@
 
 ## 1. Objective
 
-Build a lightweight tool to **fetch specific loan-file data from BytePro Enterprise** (mortgage LOS) and make it available to our CRM workflows.
+Build a **workflow automation service** that fetches loan data from BytePro Enterprise (mortgage LOS) and uses it to power CRM workflows — lender order emails, internal reminders, and CRM field updates — triggered by GoHighLevel milestone changes.
 
-### Example Use Cases
-| # | Action | Data Needed | Status |
-|---|--------|-------------|--------|
-| 1 | Email title company to submit lender order | Title company email + contact | ✅ Working |
-| 2 | Populate CRM contact cards | Borrower name, loan officer, processor | 🔜 Next |
-| 3 | Status sync | Loan status, milestone dates | ⬜ Planned |
+### Implemented Workflows
+| # | Trigger | Action | Data Fetched | Status |
+|---|---------|--------|-------------|--------|
+| 1 | Loan → "Processing" | Email title company for lender order | Title Co, Borrower(s), CC recipients | ✅ Working |
+| 2 | Loan → "Processing" | Internal reminder to processor | Processor email, borrower names | ✅ Working |
+| 3 | Loan → "Processing" | Update CRM custom fields | Title company name/email/phone | ✅ Mock |
+
+### Future Workflows
+| # | Trigger | Action | Status |
+|---|---------|--------|--------|
+| 4 | Loan → "Conditional Approval" | Fetch open PTD conditions, email team | ⬜ Planned |
+| 5 | CRM contact cards | Populate from BytePro parties | ⬜ Planned |
+| 6 | Status sync | Loan status, milestone dates | ⬜ Planned |
 
 ---
 
 ## 2. Architecture
 
 ```
-┌──────────────┐     HTTPS/REST      ┌──────────────────┐
-│  Our Tool    │ ──────────────────▶ │  BytePro API     │
-│  (Node.js)   │ ◀────────────────── │  (ByteWeb)       │
-└──────┬───────┘                      └──────────────────┘
-       │
-       ▼
-┌──────────────┐
-│  CRM / Email │  (future integration)
-│  Automation  │
-└──────────────┘
+GHL CRM                        Our Service                    BytePro API
+┌──────────────┐               ┌──────────────────┐           ┌──────────────┐
+│  Loan moves  │──webhook──▶   │  byte_api/       │──REST──▶  │  ByteWeb     │
+│  to milestone│               │  (Node/Express)  │◀──────    │  Search API  │
+└──────────────┘               └──────┬───────────┘           └──────────────┘
+                                      │
+                        ┌─────────────┼─────────────┐
+                        ▼             ▼             ▼
+                   ┌─────────┐  ┌──────────┐  ┌─────────┐
+                   │  SMTP   │  │   GHL    │  │ Google  │
+                   │  Email  │  │   API    │  │ Sheets  │
+                   │(lender) │  │(fields)  │  │(future) │
+                   └─────────┘  └──────────┘  └─────────┘
 ```
 
 | Layer | Choice | Reason |
 |-------|--------|--------|
-| Runtime | Node.js | Fast setup, aligns with existing stacks |
+| Runtime | Node.js + Express | Fast setup, aligns with existing stacks |
 | HTTP | axios | Promise-based, clean error handling |
+| Email | nodemailer | SMTP support, Ethereal mock mode |
 | Secrets | `.env` (git-ignored) | Never commit creds |
-| Docs | `architect.md` | Living record of every decision |
+| Hosting | AWS App Runner | Same as commission_app |
 
 ---
 
@@ -62,10 +73,10 @@ Build a lightweight tool to **fetch specific loan-file data from BytePro Enterpr
 
 | # | Method | Endpoint | Purpose | Notes |
 |---|--------|----------|---------|-------|
-| 1 | `GET`  | `/byteapi/Auth` | Authenticate, get session token | Custom headers: username, password, authorizationkey |
+| 1 | `GET`  | `/byteapi/Auth` | Authenticate, get session token | Custom headers |
 | 2 | `POST` | `/byteapi/Search` | **Primary data retrieval** | JSON body, returns SearchRows |
-| 3 | `GET`  | `/byteapi/SearchHelp` | API schema / request shape docs | Returns SearchRequest schema |
-| 4 | `GET`  | `/byteapi/SearchExample` | Example request body | Shows sample Search payload |
+| 3 | `GET`  | `/byteapi/SearchHelp` | API schema docs | Returns SearchRequest schema |
+| 4 | `GET`  | `/byteapi/SearchExample` | Example request body | Shows sample payload |
 
 ### Search Request Shape
 
@@ -108,19 +119,40 @@ Build a lightweight tool to **fetch specific loan-file data from BytePro Enterpr
 | `FirstName` | First name | |
 | `LastName` | Last name | |
 | `FullName` | Full name | |
-| `Title` | Job title | |
+| `Title` | Job title | Used for CC recipient role matching |
 | `Street` | Street address | |
 | `City` | City | |
 | `State` | State | |
 | `Zip` | ZIP code | |
 
 ### Borrower Table
+> Both borrower AND co-borrower are stored in the **same `Borrower` table**.
+> Use `MaxItems: 2` to get both in one API call: row 1 = primary, row 2 = co-borrower.
+
 | FieldName | Description | Notes |
 |-----------|-------------|-------|
 | `Email` | Borrower email | Note: lowercase 'e' (different from Parties!) |
 | `FirstName` | First name | |
 | `LastName` | Last name | |
 | `SSN` | SSN | |
+
+> ⚠️ **No separate `CoBorrower` table.** Co-borrower data lives in the `Borrower` table as the 2nd row.
+
+### Condition Table (Discovered — Not Yet Implemented)
+> Loan conditions with status tracking. Each condition is a row.
+
+| FieldName | Description | Notes |
+|-----------|-------------|-------|
+| `DescriptionTemplate` | Condition description text | String |
+| `Class` | Condition class (UW, etc.) | |
+| `Type` | Condition type (APP, DISCL, CRED, INCOME) | |
+| `No` | Condition number | |
+| `Stage` | Stage (e.g., "Prior To Docs") | |
+| `Cleared` | Whether condition is cleared | Checkbox — likely boolean |
+| `Requested` | Date requested | |
+| `Received` | Date received | |
+| `Submitted` | Date submitted | |
+| `Responsibility` | Who is responsible (Loan Processor, Underwriter, etc.) | |
 
 ### FileData Table
 | FieldName | Description | Notes |
@@ -131,58 +163,96 @@ Build a lightweight tool to **fetch specific loan-file data from BytePro Enterpr
 
 ---
 
-## 6. Title Company Integration (✅ COMPLETE)
+## 6. Data Fetching Recipes
 
-### How It Works
-1. `POST /byteapi/Search` with `FileName` filter + all `Parties` contact fields
-2. API returns all 81 party rows for the loan
-3. Client-side filter: match `Company` containing "title" (case-insensitive)
-4. Or: use server-side `Company` exact-match filter if company name is known
-
-### Example Result
-```
-Loan:     PHM0124084419
-Company:  Core Title
-Email:    orders@coretitle.com
-Address:  21500 Haggerty Rd Ste 200, Northville, MI 18167
-```
-
-### Production API
+### Title Company
 ```javascript
-const { getTitleCompany } = require('./src/loan-parties');
+const { getTitleCompany } = require('./src/loan-data');
 const titleCo = await getTitleCompany('PHM0124084419');
-// → { Company: "Core Title", EMail: "orders@coretitle.com", ... }
-
-// Or, if you know the exact company name:
-const { getPartyByCompany } = require('./src/loan-parties');
-const party = await getPartyByCompany('PHM0124084419', 'Core Title');
-// → server-side filtered, returns 1 row
+// → { company: "Core Title", email: "orders@coretitle.com", ... }
 ```
+- Searches Parties table, client-side filters for "title" in company name
+
+### Borrower + Co-Borrower (Single API Call)
+```javascript
+const { getBorrowerInfo } = require('./src/loan-data');
+const borrower = await getBorrowerInfo('PHM0124084419');
+// → { fullName: "Dale Fulcher", coBorrowerName: "Michele Fulcher",
+//     allBorrowers: "Dale Fulcher & Michele Fulcher" }
+```
+- Uses `MaxItems: 2` on `Borrower` table — 1 API call for both
+
+### CC Recipients (Internal Staff)
+```javascript
+const { getCCRecipients } = require('./src/loan-data');
+const cc = await getCCRecipients('PHM0124084419');
+// → [{ role: "Loan Processor", email: "..." }, ...]
+```
+- Fetches all Parties, filters for internal staff by email/title pattern
+- Roles: Loan Processor, Loan Officer, LO Assistant
+
+### Loan Amount
+- **Sourced from GHL webhook data** (`loan_with_mipfunding_fee` field)
+- NOT fetched from BytePro — saves 1 API call per trigger
 
 ---
 
-## 7. File Structure
+## 7. Workflow: Processing Trigger
+
+### Pipeline (3 parallel BytePro calls)
+```
+GHL Webhook (loan → "Processing")
+    │
+    ├──▶ Parse loan number from opportunity name ("Loan - PHM...")
+    │
+    ├──▶ [PARALLEL] BytePro: getTitleCompany()
+    ├──▶ [PARALLEL] BytePro: getBorrowerInfo() ← includes co-borrower
+    ├──▶ [PARALLEL] BytePro: getCCRecipients()
+    │
+    ├──▶ Parse loan amount from webhook custom data
+    │
+    ├──▶ Send lender order email (TO: title co, CC: internal team)
+    ├──▶ Send processor reminder email
+    └──▶ Update GHL custom fields (mock for now)
+```
+
+### Emails Sent
+| Email | To | CC | Content |
+|-------|----|----|---------|
+| Lender Order | Title company email | Processor, LO, LOA | Loan details + order request |
+| Processor Reminder | Loan processor | — | Follow-up instructions |
+
+---
+
+## 8. File Structure
 
 ```
-byte-api-tool/
-├── architect.md           ← this file (living doc)
-├── .env                   ← secrets (git-ignored)
-├── .env.example           ← template showing required vars
+byte_api/
+├── architect.md          ← this file (living doc)
+├── .env                  ← secrets (git-ignored)
+├── .env.example          ← template showing required vars
 ├── .gitignore
 ├── package.json
 ├── src/
-│   ├── client.js          ← axios wrapper + auth + session retry
-│   └── loan-parties.js    ← production party fetch functions
-├── scripts/
-│   ├── demo.js            ← quick demo: fetch title company
-│   ├── test-connection.js ← auth smoke test
-│   └── discover-*.js      ← exploration scripts (can delete)
-└── *.txt                  ← raw API response logs (gitignored)
+│   ├── server.js         ← Express server, /webhook/processing endpoint
+│   ├── config.js         ← env config (SMTP, GHL, BytePro, mock toggles)
+│   ├── client.js         ← axios wrapper + auth + session retry
+│   ├── loan-data.js      ← data fetchers (title, borrower, CC, loan amount)
+│   ├── loan-parties.js   ← original party fetch functions
+│   ├── email-service.js  ← SMTP sender with Ethereal mock mode
+│   ├── handlers/
+│   │   └── processing-trigger.js  ← orchestrates full Processing workflow
+│   └── templates/
+│       ├── lender-order.js        ← lender order email HTML
+│       └── processor-reminder.js  ← processor reminder email HTML
+└── scripts/
+    ├── test-workflow.js   ← E2E test (uses real BytePro, mock SMTP)
+    └── demo.js            ← quick demo: fetch title company
 ```
 
 ---
 
-## 8. Key Discoveries & Gotchas
+## 9. Key Discoveries & Gotchas
 
 | # | Discovery | Impact |
 |---|-----------|--------|
@@ -193,31 +263,62 @@ byte-api-tool/
 | 5 | Field casing varies by table | `Parties.EMail` vs `Borrower.Email` |
 | 6 | `SearchDisplayHeaders: true` returns field metadata | Useful for debugging |
 | 7 | Session tokens expire; 401 triggers re-auth | Client handles automatically |
+| 8 | **Co-borrower is in `Borrower` table** (not separate table) | Use `MaxItems: 2` — row 1 = borrower, row 2 = co-borrower |
+| 9 | Loan amount from GHL, not BytePro | Saves API calls; uses `loan_with_mipfunding_fee` field |
+| 10 | Conditions table exists with `Cleared` status | Enables future condition-fetching workflow |
 
 ---
 
-## 9. Decision Log
+## 10. Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `BYTEPRO_BASE_URL` | BytePro API base URL | Required |
+| `BYTEPRO_USERNAME` | Auth username | Required |
+| `BYTEPRO_PASSWORD` | Auth password | Required |
+| `BYTEPRO_AUTH_KEY` | Authorization key | Required |
+| `SMTP_HOST` | SMTP server host | — |
+| `SMTP_PORT` | SMTP server port | 587 |
+| `SMTP_USER` | SMTP username | — |
+| `SMTP_PASS` | SMTP password | — |
+| `SMTP_FROM` | From email address | — |
+| `SMTP_MOCK` | Use Ethereal mock | `true` |
+| `GHL_API_KEY` | GoHighLevel API key | — |
+| `GHL_MOCK` | Skip real GHL calls | `true` |
+| `PORT` | Express server port | 3000 |
+
+---
+
+## 11. Decision Log
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-03-24 | Node.js + axios | Matches existing stack, fast iteration |
 | 2026-03-24 | `.env` for secrets | Industry standard, prevents leaks |
-| 2026-03-24 | Manual test scripts first | Validate API shape before writing assertions |
+| 2026-03-24 | Manual test scripts first | Validate API shape before assertions |
 | 2026-03-25 | Client-side party-type filtering | Server doesn't support party type queries |
-| 2026-03-25 | Company name matching for title company | Reliable with exact match; "title" substring as fallback |
+| 2026-03-25 | Company name matching for title co | Reliable with exact match; "title" substring fallback |
+| 2026-03-25 | Loan amount from GHL webhook | Avoids extra BytePro API call |
+| 2026-03-25 | Single `Borrower` table query (MaxItems: 2) | Co-borrower is row 2, not a separate table |
+| 2026-03-25 | Separate service from commission_app | Independent deployment, different runtime (Node vs Python) |
+| 2026-03-25 | Mock-first email (Ethereal) | Safe testing without sending real emails |
 
 ---
 
-## 10. Next Steps
+## 12. Next Steps
 
 - [x] Authenticate and explore API
 - [x] Map Parties table fields
 - [x] Fetch title company email
 - [x] Build production fetch functions
-- [x] Document everything
-- [ ] Expand to other party types (Listing Agent, Selling Agent, Loan Officer)
-- [ ] Add Borrower table fetch functions
-- [ ] Build CRM integration layer
-- [ ] Add loan status / milestone fields
-- [ ] Develop automated tests (Jest)
-- [ ] Move to production (AWS Lambda or Supabase Edge Function)
+- [x] Borrower + co-borrower fetching
+- [x] CC recipient logic
+- [x] Email service (SMTP + mock)
+- [x] Processing workflow (lender order + reminder)
+- [x] E2E testing
+- [ ] Deploy to AWS App Runner
+- [ ] Configure real SMTP (processing@... email)
+- [ ] Configure real GHL API token
+- [ ] Conditions fetching (Conditional Approval trigger)
+- [ ] Google Sheets integration
+- [ ] Expand to other party types (Insurance Co, etc.)
