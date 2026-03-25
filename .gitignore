@@ -4,3 +4,8 @@ __pycache__/
 venv/
 .DS_Store
 commission_updater.log
+
+# Node.js (byte_api)
+node_modules/
+package-lock.json
+*.txt
