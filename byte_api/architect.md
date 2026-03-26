@@ -1,7 +1,7 @@
 # BytePro API Integration — Architect Document
 
 > **Living Document** — Updated as we build, test, and expand the integration.
-> Last updated: 2026-03-25
+> Last updated: 2026-03-25 (PTD email workflow finalized)
 
 ---
 
@@ -19,9 +19,12 @@ Build a **workflow automation service** that fetches loan data from BytePro Ente
 ### Future Workflows
 | # | Trigger | Action | Status |
 |---|---------|--------|--------|
-| 4 | Loan → "Conditional Approval" | Fetch open PTD conditions, email team | ⬜ Planned |
-| 5 | CRM contact cards | Populate from BytePro parties | ⬜ Planned |
-| 6 | Status sync | Loan status, milestone dates | ⬜ Planned |
+| 4 | Loan → "Conditional Approval" | Email **Prior To Docs** conditions to team | ✅ Working |
+| 5 | Loan → "Approval" | Email **Prior To Funding** conditions to team | ⬜ Planned |
+| 6 | CRM contact cards | Populate from BytePro parties | ⬜ Planned |
+| 7 | Status sync | Loan status, milestone dates | ⬜ Planned |
+| 8 | Conditions Dashboard | Web dashboard showing open conditions per file with sorting, filtering | ⬜ Planned |
+| 9 | Twilio SMS from Dashboard | Processor texts borrower from dashboard re: outstanding BRW conditions | ⬜ Planned |
 
 ---
 
@@ -134,29 +137,47 @@ GHL CRM                        Our Service                    BytePro API
 | `Email` | Borrower email | Note: lowercase 'e' (different from Parties!) |
 | `FirstName` | First name | |
 | `LastName` | Last name | |
+| `MobilePhone` | Cell phone | Confirmed: returns 10-digit number |
+| `HomePhone` | Home phone | Fallback if no mobile |
 | `SSN` | SSN | |
 
 > ⚠️ **No separate `CoBorrower` table.** Co-borrower data lives in the `Borrower` table as the 2nd row.
 
-### Condition Table (Discovered — Not Yet Implemented)
+### Condition Table
 > Loan conditions with status tracking. Each condition is a row.
 > ⚠️ **BytePro API hangs indefinitely on incorrect field names** (no error, no timeout). Only use confirmed field names below.
 
-#### ✅ Confirmed Fields (API-tested)
-| FieldName | Description | Source |
-|-----------|-------------|--------|
-| `DescriptionTemplate` | Condition description text | API test |
-| `ConditionStage` | Stage (e.g., "Prior To Docs") | API test |
-| `ResponsibleParty` | Who is responsible | User screenshot — ContactCat enum (1=LO, 2=Processor, 4=UW, etc.) |
+#### ✅ Confirmed Fields
+| FieldName | Description | Source | Notes |
+|-----------|-------------|--------|-------|
+| `DescriptionTemplate` | Condition description text | API test | |
+| `ConditionStage` | Stage (e.g., "Prior To Docs") | API test | Used to filter PTD vs PTF conditions |
+| `ResponsibleParty` | Who is responsible | API test | ContactCat enum (1=LO, 2=Processor, 4=UW, 32=Borrower) |
+| `NeededFromBorrower` | Borrower condition flag | BytePro UI (2026-03-25) | Boolean → returns `Yes`/`No`. Maps to UI "Brw" column |
+| `ClearedDate` | When condition was cleared | IT team (2026-03-25) | DateTime — **empty = not cleared**, set = cleared |
+| `ConditionTypeCode` | Condition type (APP, DISCL, CRED, INCOME) | IT team (2026-03-25) | |
+| `ConditionNo` | Condition number (101, 103, etc.) | IT team (2026-03-25) | |
+| `RequestedDate` | When condition was requested | API probe (2026-03-25) | Empty = not yet requested (maps to UI checkbox) |
+| `ReceivedDate` | When condition was received | API probe (2026-03-25) | Empty = not yet received (maps to UI checkbox) |
+| `RequestedBy` | Who requested the condition | API probe (2026-03-25) | |
+| `ReceivedBy` | Who marked as received | API probe (2026-03-25) | |
 
-#### ⏳ Pending — Awaiting Field Info from IT Team
-| UI Column | Purpose | Guessed Names (ALL FAILED) |
-|-----------|---------|----------------------------|
-| **Cleared** | Whether condition is cleared (checkbox) | `Cleared`, `ClearedDate`, `ConditionCleared` — all caused API hangs |
-| **Type** | Condition type (APP, DISCL, CRED, INCOME) | `ConditionType` — caused API hang |
-| **No** | Condition number (101, 103, etc.) | `ConditionNo` — caused API hang |
+> ✅ 11 Condition fields confirmed. UI checkboxes map to date/boolean fields in the API.
+> ✅ BRW column uses `NeededFromBorrower` (Boolean, Yes/No) — confirmed from BytePro field library.
 
-> 📧 IT team has been contacted for exact field names — they have these mapped for the company intranet.
+#### Excluded Canned Conditions
+> These are auto-fulfilled when related reports come in, or are part of another condition — excluded from PTD email to reduce clutter.
+
+| Number | Description | Reason |
+|--------|-------------|--------|
+| 410 | 4506C fully executed by all borrowers | Part of another condition |
+| 606 | Satisfactory appraisal report | Auto-fulfilled when appraisal comes in |
+| 607 | Appraiser field review / 2nd appraisal (if required) | Auto-fulfilled |
+| 608 | Review Appraisal for Condo Project Approval | Auto-fulfilled |
+| 610 | Evidence of completion of outstanding repairs | Auto-fulfilled |
+| 705 | Title Vesting | Auto-fulfilled when title comes in |
+| 713 | Copy of plotted survey (if required) | Auto-fulfilled |
+| 720 | Payoff for existing 1st lien (if refinance) | Auto-fulfilled |
 
 ### FileData Table
 | FieldName | Description | Notes |
@@ -228,6 +249,51 @@ GHL Webhook (loan → "Processing")
 
 ---
 
+## 7b. Workflow: PTD Conditions Email
+
+### Trigger
+GHL Webhook → Loan reaches **"Conditional Approval"** milestone
+
+### Pipeline
+```
+GHL Webhook (loan → "Conditional Approval")
+    │
+    ├──▶ Parse loan number from opportunity name
+    │
+    ├──▶ [PARALLEL] BytePro: fetchBorrower() ← name, phone, email
+    ├──▶ [PARALLEL] BytePro: fetchTeam() ← processors, LOs from Parties
+    ├──▶ [PARALLEL] BytePro: fetchPTDConditions() ← open conditions
+    │
+    ├──▶ Filter: PTD only, NOT cleared, NOT excluded canned (8 items)
+    ├──▶ Sort: BRW conditions first
+    │
+    ├──▶ Build Outlook-compatible HTML email (table-based, no CSS3)
+    ├──▶ Generate PDF attachment via Puppeteer
+    └──▶ Send to ALL team members (processor(s) + LO) on single email
+```
+
+### Email Details
+| Field | Value |
+|-------|-------|
+| **To** | All team members (processors + LO), dynamically from Parties table |
+| **Subject** | `[LastName] [LoanNumber] - Condition Update` |
+| **From** | `processing@mypriorityhome.com` |
+| **Attachment** | `[LoanNumber]_PTD_Conditions.pdf` |
+
+### Email Content
+- **Header**: Borrower name + phone + email, team contact info (processors, LO)
+- **Table columns**: Description, Stage, BRW (badge), Requested (✓ + date), Received (✓ + date)
+- **Sorting**: BRW (NeededFromBorrower=Yes) conditions sorted to top with amber badge
+- **Rendering**: Full table-based HTML — compatible with Outlook desktop, Gmail, Apple Mail
+
+### Dependencies
+| Package | Purpose |
+|---------|-------|
+| `puppeteer` | PDF generation from HTML (headless Chrome, Letter format) |
+| `nodemailer` | SMTP delivery via Google Workspace |
+
+---
+
 ## 8. File Structure
 
 ```
@@ -250,6 +316,7 @@ byte_api/
 │       ├── lender-order.js        ← lender order email HTML
 │       └── processor-reminder.js  ← processor reminder email HTML
 └── scripts/
+    ├── test-conditions-email.js  ← PTD conditions email (standalone test + reference impl)
     ├── test-workflow.js          ← E2E test (uses real BytePro, mock SMTP)
     ├── discover-conditions.js    ← condition table field probing tool
     └── demo.js                   ← quick demo: fetch title company
@@ -309,6 +376,10 @@ byte_api/
 | 2026-03-25 | Single `Borrower` table query (MaxItems: 2) | Co-borrower is row 2, not a separate table |
 | 2026-03-25 | Separate service from commission_app | Independent deployment, different runtime (Node vs Python) |
 | 2026-03-25 | Mock-first email (Ethereal) | Safe testing without sending real emails |
+| 2026-03-25 | PTD email to all team members | Single email thread — any party can Reply All |
+| 2026-03-25 | Outlook-compatible HTML | Table-based layout; no CSS3 gradients/radius |
+| 2026-03-25 | 8 canned conditions excluded | Auto-fulfilled or duplicate conditions stripped from email |
+| 2026-03-25 | PDF attachment with Puppeteer | Every email includes downloadable conditions report |
 
 ---
 
@@ -323,11 +394,14 @@ byte_api/
 - [x] Email service (SMTP + mock)
 - [x] Processing workflow (lender order + reminder)
 - [x] E2E testing
-- [ ] **Configure real SMTP** — IT setting up dedicated email account (credentials incoming)
-- [ ] **Get missing Condition field names from IT** — Cleared, Type, No
-- [ ] **Build Conditions workflow** — fetch open PTD conditions on "Conditional Approval" trigger
+- [x] **Configure real SMTP** — `processing@mypriorityhome.com` via Google Workspace
+- [x] **Get missing Condition field names from IT** — `ClearedDate`, `ConditionTypeCode`, `ConditionNo`
+- [x] **PTD Conditions email** — Outlook-compatible, BRW sorting, PDF attachment, team contacts
+- [ ] **GHL Webhook for PTD** — wire up "Conditional Approval" milestone trigger to PTD email
+- [ ] **Prior To Funding email** — triggered at "Approval" milestone (separate workflow)
+- [ ] **Conditions Dashboard** — web UI for viewing/sorting open conditions per file
+- [ ] **Twilio SMS from Dashboard** — processor texts borrower re: outstanding BRW conditions
 - [ ] Deploy to AWS App Runner
 - [ ] Configure real GHL API token
 - [ ] Google Sheets integration (conditions tracking)
 - [ ] Expand to other party types (Insurance Co, etc.)
-- [ ] Add Suspense and Prior To Funding condition stages

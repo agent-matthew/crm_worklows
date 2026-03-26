@@ -1,103 +1,75 @@
-# BytePro Workflow Service — Session Handover
-
-> **For:** Next coding session  
-> **From:** Session ending 2026-03-25  
-> **Status:** Processing workflow built & tested, ready for production email config + conditions workflow
+# Session Handover — BytePro PTD Email Automation
+> Last updated: 2026-03-25
 
 ---
 
-## What's Done
+## ✅ What's Done
 
-### Processing Workflow (✅ Complete)
-- GHL webhook → parses loan # → parallel BytePro API calls → emails + CRM update
-- **Lender order email** to title company with CC to internal staff
-- **Processor reminder email** with follow-up instructions
-- Borrower + co-borrower fetched in single API call (`MaxItems: 2`)
-- CC recipients auto-detected by role (Processor, LO, LOA)
-- Loan amount sourced from GHL webhook (not BytePro)
-- Full E2E test passing with mock SMTP (Ethereal)
+### PTD Conditions Email (fully working)
+- **Script**: `scripts/test-conditions-email.js` — standalone, production-ready
+- **Sends to**: All team members (processors + LO) on a single email thread (Reply All enabled)
+- **Subject**: `[LastName] [LoanNumber] - Condition Update`
+- **Content**: Outlook-compatible HTML with borrower header, team contacts, BRW badges, date-stamped Requested/Received columns
+- **Attachment**: PDF generated via Puppeteer
+- **Filters**: PTD only, NOT cleared, 8 canned conditions excluded (410, 606, 607, 608, 610, 705, 713, 720)
+- **Sorting**: BRW conditions sorted to top
 
-### Condition Table Discovery (✅ Confirmed Feasible)
-- `Condition` table is queryable via BytePro Search API
-- **3 fields confirmed:** `DescriptionTemplate`, `ConditionStage`, `ResponsibleParty`
-- **3 fields pending** from IT team: Cleared, Type, No
+### Supporting Infrastructure
+- `src/email-service.js` — SMTP via Google Workspace (`processing@mypriorityhome.com`), supports attachments
+- `src/client.js` — BytePro API client with auto-retry on 401
+- `architect.md` — Full documentation of the workflow
 
 ---
 
-## What's Needed at Session Start
+## 🔜 Next Session: GHL Webhook → PTD Email
 
-The user will provide these items:
+### Goal
+Wire up a GoHighLevel workflow so that when a loan moves to **"Conditional Approval"**, it fires a webhook that triggers the PTD email automatically.
 
-### 1. SMTP Email Credentials
-IT is setting up a dedicated email account for notifications.
+### GHL Workflow Setup (for you to configure in GHL)
 ```
-SMTP_HOST=smtp.gmail.com  (or whatever IT provides)
-SMTP_PORT=587
-SMTP_USER=notifications@company.com
-SMTP_PASS=app-password-here
-SMTP_FROM=notifications@company.com
-SMTP_MOCK=false
+Trigger: Pipeline Stage Changed → "Conditional Approval"
+Action:  Webhook (POST) → https://<your-server>/webhook/ptd-conditions
 ```
 
-### 2. Condition Field Names from IT
-Exact BytePro API field names for:
-| UI Column | What We Need |
-|-----------|-------------|
-| **Cleared** | The field name for the "cleared" checkbox |
-| **Type** | The field name for condition type (APP, DISCL, CRED, INCOME) |
-| **No** | The field name for condition number (101, 103, etc.) |
+#### Webhook Payload (recommended)
+The webhook should send the loan file number. Configure GHL to POST:
+```json
+{
+  "file_number": "{{custom_field.loan_number}}",
+  "contact_id": "{{contact.id}}",
+  "opportunity_id": "{{opportunity.id}}"
+}
+```
+> The loan number can also be parsed from the opportunity name pattern: `"Loan - PHM..."` (this is how the Processing trigger works today).
 
-> ⚠️ **Critical:** BytePro API hangs indefinitely on wrong field names. Only use exact names from Field Info or IT team.
+### What We'll Build Next Session
+1. **New Express endpoint**: `POST /webhook/ptd-conditions`
+   - Receives GHL webhook with file number
+   - Calls `fetchBorrower()`, `fetchTeam()`, `fetchPTDConditions()` in parallel
+   - Builds email + PDF and sends to team
+   - Returns 200 OK to GHL
 
----
+2. **Production handler**: `src/handlers/ptd-conditions-trigger.js`
+   - Refactored from `scripts/test-conditions-email.js`
+   - Proper error handling, logging, response to GHL
 
-## Immediate Next Steps (In Order)
+3. **Server route registration**: Add to `src/server.js`
 
-1. **Configure real SMTP** — Update `.env` with email credentials, set `SMTP_MOCK=false`, send a test email
-2. **Test processing workflow with real email** — Run `scripts/test-workflow.js` to verify real emails arrive
-3. **Map remaining Condition fields** — Use IT-provided field names, test each one with `scripts/discover-conditions.js`
-4. **Build Conditional Approval workflow** — New trigger handler for fetching open PTD conditions and emailing team
-5. **Deploy to AWS App Runner** — Same pattern as `commission_app`
-
----
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `byte_api/architect.md` | Full architecture doc (source of truth) |
-| `byte_api/.env` | Secrets — update with real SMTP creds |
-| `byte_api/src/handlers/processing-trigger.js` | Main workflow orchestrator |
-| `byte_api/src/email-service.js` | SMTP sender (toggle mock with `SMTP_MOCK`) |
-| `byte_api/scripts/test-workflow.js` | E2E test script |
-| `byte_api/scripts/discover-conditions.js` | Condition field probing tool |
+### Reference: Existing Processing Trigger Pattern
+The Processing workflow already works this way — see:
+- `src/handlers/processing-trigger.js` — handler pattern to follow
+- `src/server.js` — existing route: `POST /webhook/processing`
 
 ---
 
-## Critical Gotchas for Next Session
+## 📋 Full Roadmap (from architect.md)
 
-1. **BytePro API hangs on wrong field names** — No error, no timeout. Must use exact names.
-2. **Field casing varies by table** — `Parties.EMail` vs `Borrower.Email` (capital M vs lowercase e)
-3. **Parties table returns ALL 81 party types** — Must filter client-side
-4. **Co-borrower is row 2 of `Borrower` table** — Not a separate table
-5. **Loan amount comes from GHL webhook** (`loan_with_mipfunding_fee`), not BytePro
-
----
-
-## Repos & Locations
-
-| Item | Path |
-|------|------|
-| Service code | `c:\Users\matti\Downloads\crm_workflows\byte_api\` |
-| Dev/testing sandbox | `c:\Users\matti\Downloads\byte-api-tool\` |
-| GitHub | `agent-matthew/crm_worklows` (master branch) |
-| Latest commit | `2ee6bd5` + architect.md update |
-
----
-
-## Future Roadmap (User Mentioned)
-
-- **Suspense conditions** — fetch conditions at Suspense stage
-- **Prior To Funding conditions** — fetch conditions at PTF stage
-- **Google Sheets integration** — log conditions to a shared sheet
-- **GHL CRM field updates** — populate title company info on contact cards
+| Priority | Item | Status |
+|----------|------|--------|
+| **NOW** | GHL Webhook → PTD email | ⬜ Next session |
+| 2 | Prior To Funding email (at "Approval" milestone) | ⬜ Planned |
+| 3 | Conditions Dashboard (web UI) | ⬜ Planned |
+| 4 | Twilio SMS from Dashboard | ⬜ Planned |
+| 5 | Deploy to AWS App Runner | ⬜ Planned |
+| 6 | Google Sheets integration | ⬜ Planned |

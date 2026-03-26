@@ -61,9 +61,10 @@ async function initTransporter() {
  * @param {string} options.subject - Email subject
  * @param {string} options.html - HTML body
  * @param {string} [options.text] - Plain text body (fallback)
+ * @param {Array} [options.attachments] - Nodemailer attachments array
  * @returns {Promise<Object>} Send result with preview URL in mock mode
  */
-async function sendEmail({ to, cc = [], subject, html, text }) {
+async function sendEmail({ to, cc = [], subject, html, text, attachments = [] }) {
   if (!transporter) {
     await initTransporter();
   }
@@ -77,6 +78,7 @@ async function sendEmail({ to, cc = [], subject, html, text }) {
     subject,
     html,
     text: text || html.replace(/<[^>]*>/g, ''),  // strip HTML as plain-text fallback
+    attachments: attachments.length > 0 ? attachments : undefined,
   };
 
   // Log what we're sending
